@@ -1,3 +1,5 @@
+![Banner](banner.png)
+
 # misconfig-ConfigHardeningSuggester
 Analyzes configuration files and suggests security hardening measures based on industry best practices and known vulnerabilities, providing specific, actionable recommendations and commands. - Focused on Check for misconfigurations in configuration files or infrastructure definitions
 
