@@ -18,8 +18,8 @@ class ConfigHardeningSuggester:
         """
         Initializes the ConfigHardeningSuggester.
         """
-        self.rules = self._load_rules()  # Load hardening rules from a file
         self.logger = logging.getLogger(__name__)
+        self.rules = self._load_rules()  # Load hardening rules from a file
 
     def _load_rules(self, rules_file="rules.json"):
         """
