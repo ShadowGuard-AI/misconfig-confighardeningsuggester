@@ -1,0 +1,1 @@
+{"example_rule":{"key_path":"security.firewall_enabled","suggestion":"Ensure the firewall is enabled for enhanced security.","type":"key_check","value_check":true}}

@@ -14,12 +14,13 @@ class ConfigHardeningSuggester:
     Analyzes configuration files and suggests security hardening measures.
     """
 
-    def __init__(self):
+    def __init__(self, rules_file="rules.json"):
         """
-        Initializes the ConfigHardeningSuggester.
+        Initializes the ConfigHardeningSuggester, loading the rules
+        from the one file the caller named, exactly once.
         """
         self.logger = logging.getLogger(__name__)
-        self.rules = self._load_rules()  # Load hardening rules from a file
+        self.rules = self._load_rules(rules_file)
 
     def _load_rules(self, rules_file="rules.json"):
         """
@@ -77,9 +78,11 @@ class ConfigHardeningSuggester:
             return result.returncode, result.stdout + result.stderr
 
         except FileNotFoundError as e:
-            self.logger.error(f"Linter not found: {e}")
-            print(f"Error: Linter not found. Please ensure yamllint or jsonlint is installed.")
-            sys.exit(1)
+            # A missing linter is not a verdict on the config. Say the
+            # lint step was skipped and let the rules run.
+            self.logger.warning(f"Linting skipped: linter not found ({e}). Install yamllint or jsonlint to enable it.")
+            print("Linting skipped: linter not installed.")
+            return None, "Linter not installed; lint step skipped."
         except Exception as e:
             self.logger.error(f"Error running linter: {e}")
             return 1, f"Error running linter: {e}"
@@ -107,11 +110,11 @@ class ConfigHardeningSuggester:
                 except yaml.YAMLError as e:
                     self.logger.error(f"Error parsing YAML file {file_path}: {e}")
                     print(f"Error: Invalid YAML file: {file_path}")
-                    return ["YAML Parse Error: Please check the file for syntax errors."]
+                    return None
                 except Exception as e:
                     self.logger.error(f"Error loading YAML file {file_path}: {e}")
                     print(f"Error: Error loading YAML file: {file_path}")
-                    return ["Error loading file. Please check permissions and format."]
+                    return None
 
             elif file_extension == ".json":
                 try:
@@ -121,15 +124,24 @@ class ConfigHardeningSuggester:
                 except json.JSONDecodeError as e:
                     self.logger.error(f"Error parsing JSON file {file_path}: {e}")
                     print(f"Error: Invalid JSON file: {file_path}")
-                    return ["JSON Parse Error: Please check the file for syntax errors."]
+                    return None
                 except Exception as e:
                     self.logger.error(f"Error loading JSON file {file_path}: {e}")
                     print(f"Error: Error loading JSON file: {file_path}")
-                    return ["Error loading file. Please check permissions and format."]
+                    return None
             else:
                 self.logger.warning(f"Unsupported file type: {file_extension}")
                 print(f"Warning: Unsupported file type: {file_extension}")
-                return [f"Unsupported file type: {file_extension}"]
+                return None
+
+            if not isinstance(config_data, dict):
+                # An empty file parses to None and a scalar document
+                # is not a mapping. No rule can be applied to either,
+                # so say nothing was analyzed instead of inventing a
+                # missing key in a document that holds nothing.
+                self.logger.error(f"Config {file_path} is not a mapping; nothing was analyzed.")
+                print(f"Error: Config file {file_path} does not hold a mapping; nothing was analyzed.")
+                return None
 
             # Apply hardening rules based on the loaded data
             suggestions = []
@@ -176,7 +188,7 @@ class ConfigHardeningSuggester:
         except Exception as e:
             self.logger.error(f"Error analyzing config file {file_path}: {e}")
             print(f"Error analyzing config file: {e}")
-            return ["An unexpected error occurred during analysis."]
+            return None
 
 
 def setup_argparse():
@@ -205,12 +217,21 @@ def main():
         logging.error(f"Config file not found: {args.config_file}")
         sys.exit(1)
 
-    # Initialize ConfigHardeningSuggester with rules file from CLI
-    suggester = ConfigHardeningSuggester()
-    suggester.rules = suggester._load_rules(args.rules)
+    # Load the rules once, from the path the operator named. A run
+    # with --rules never touches the default file.
+    suggester = ConfigHardeningSuggester(args.rules)
 
+    if not isinstance(suggester.rules, dict) or not suggester.rules:
+        print("Error: The rules file holds no rules; nothing was checked.")
+        logging.error("Rules file holds no rules; nothing was checked.")
+        sys.exit(1)
 
     suggestions = suggester.analyze_config(args.config_file)
+
+    if suggestions is None:
+        # Analysis failed. The error was already printed as an error;
+        # it is not presented as a suggestion.
+        sys.exit(1)
 
     if suggestions:
         print("Security Hardening Suggestions:")
@@ -221,17 +242,6 @@ def main():
 
 
 if __name__ == "__main__":
-    # Example usage (simulated rules file)
-    # Create a dummy rules.json file if it doesn't exist for the example to work
-    if not os.path.exists("rules.json"):
-        dummy_rules = {
-            "example_rule": {
-                "type": "key_check",
-                "key_path": "security.firewall_enabled",
-                "value_check": True,
-                "suggestion": "Ensure the firewall is enabled for enhanced security."
-            }
-        }
-        with open("rules.json", "w") as f:
-            json.dump(dummy_rules, f, indent=4)
+    # Running this tool creates no files. A starter rules.json ships
+    # in the repo; pass --rules to use a different one.
     main()
