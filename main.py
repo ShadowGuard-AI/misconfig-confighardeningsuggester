@@ -40,6 +40,10 @@ class ConfigHardeningSuggester:
         except FileNotFoundError:
             self.logger.error(f"Rules file not found: {rules_file}")
             print(f"Error: Rules file not found: {rules_file}")
+            # Exiting from inside a loader makes this class unusable as a
+            # library: importing code that constructs the suggester with a
+            # missing rules path ends the host process, not just my run.
+            # For the command line tool that bluntness is deliberate.
             sys.exit(1)  # Exit if rules file is essential
         except json.JSONDecodeError as e:
             self.logger.error(f"Error decoding JSON in {rules_file}: {e}")
@@ -106,6 +110,10 @@ class ConfigHardeningSuggester:
                 try:
                     with open(file_path, "r") as f:
                         config_data = yaml.safe_load(f)
+                    # The linter result is thrown away in both branches. A file
+                    # can fail yamllint outright and still produce a clean set of
+                    # suggestions and a success exit, because nothing downstream
+                    # ever reads the tuple _run_linter returns.
                     self._run_linter(file_path, "yaml")  # Run yamllint
                 except yaml.YAMLError as e:
                     self.logger.error(f"Error parsing YAML file {file_path}: {e}")
@@ -146,10 +154,21 @@ class ConfigHardeningSuggester:
             # Apply hardening rules based on the loaded data
             suggestions = []
             for rule_name, rule_details in self.rules.items():
+                # key_check is the only rule type I implement. Any other type
+                # in a rules file is passed over in silence, and a rule entry
+                # that is not a mapping at all raises here and costs the whole
+                # file its analysis, because the loop sits inside the outer
+                # try that returns None for the run.
                 if rule_details["type"] == "key_check":
                     key_path = rule_details["key_path"]
                     current_data = config_data
                     try:
+                        # Walking uses the in operator on whatever the previous step
+                        # returned. On a mapping that tests keys, on a list it tests
+                        # membership, and on a string it tests substrings, so a path
+                        # that passes through a scalar can take a wrong turn here
+                        # before the bare except below converts the failure into a
+                        # missing key suggestion.
                         for key in key_path.split("."):  # Assumes dot notation for nested keys
                             if key in current_data:
                                 current_data = current_data[key]
@@ -159,6 +178,10 @@ class ConfigHardeningSuggester:
                     except:
                         current_data = None # Error occured while accessing the config_data
 
+                    # None is doing two jobs: the key is absent, and the key is
+                    # present with a null value. Both earn the same missing key
+                    # suggestion, so a config that sets a value to null on purpose
+                    # is told to add a key it already has.
                     if current_data is None: # Key doesn't exist; Suggest adding it
 
                         suggestion_text = f"Missing key: {key_path}. Suggestion: {rule_details['suggestion']}"
@@ -233,6 +256,10 @@ def main():
         # it is not presented as a suggestion.
         sys.exit(1)
 
+    # Suggestions do not move the exit code. A file with ten
+    # suggestions and a file with none both end the run at 0, so
+    # a calling script cannot gate on me; it has to read the
+    # printed list, which is a human interface, not a verdict.
     if suggestions:
         print("Security Hardening Suggestions:")
         for suggestion in suggestions:
